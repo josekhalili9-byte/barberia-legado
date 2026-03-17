@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Scissors, MapPin, Phone, Clock, Calendar, User, Star, ChevronRight, Lock, X, Plus, Trash2, Menu, Sun, Moon, Check, CalendarPlus } from 'lucide-react';
+import { Scissors, MapPin, Phone, Clock, Calendar, User, Star, ChevronRight, Lock, X, Plus, Trash2, Menu, Sun, Moon, Check, CalendarPlus, Save } from 'lucide-react';
 import Chatbot from './components/Chatbot';
 
 // --- Initial Data ---
@@ -37,9 +37,15 @@ const staggerContainer = {
 export default function App() {
   // --- State ---
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
-  const [services, setServices] = useState(initialServices);
-  const [gallery, setGallery] = useState(initialGallery);
-  const [appointments, setAppointments] = useState<{ id: number; name: string; service: string; date: string; time: string }[]>([]);
+  const [services, setServices] = useState(() => {
+    try { const saved = localStorage.getItem('legado_services'); return saved ? JSON.parse(saved) : initialServices; } catch { return initialServices; }
+  });
+  const [gallery, setGallery] = useState(() => {
+    try { const saved = localStorage.getItem('legado_gallery'); return saved ? JSON.parse(saved) : initialGallery; } catch { return initialGallery; }
+  });
+  const [appointments, setAppointments] = useState<{ id: number; name: string; service: string; date: string; time: string; status: 'pending' | 'confirmed' | 'rejected' }[]>(() => {
+    try { const saved = localStorage.getItem('legado_appointments'); return saved ? JSON.parse(saved) : []; } catch { return []; }
+  });
   
   const [isScrolled, setIsScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -50,6 +56,7 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [adminError, setAdminError] = useState('');
   const [adminTab, setAdminTab] = useState('citas'); // citas, servicios, galeria
+  const [adminMessage, setAdminMessage] = useState('');
 
   // Reservation Form State
   const [resName, setResName] = useState('');
@@ -94,7 +101,9 @@ export default function App() {
       time: resTime,
       status: 'pending' as const
     };
-    setAppointments([...appointments, newAppt]);
+    const updatedAppointments = [...appointments, newAppt];
+    setAppointments(updatedAppointments);
+    localStorage.setItem('legado_appointments', JSON.stringify(updatedAppointments));
     setConfirmedAppt(newAppt);
     setResSuccess(true);
     setResName('');
@@ -123,6 +132,18 @@ export default function App() {
     setAppointments(appointments.map(appt => 
       appt.id === id ? { ...appt, status } : appt
     ));
+  };
+
+  const deleteAppointment = (id: number) => {
+    setAppointments(appointments.filter(appt => appt.id !== id));
+  };
+
+  const saveAdminChanges = () => {
+    localStorage.setItem('legado_services', JSON.stringify(services));
+    localStorage.setItem('legado_gallery', JSON.stringify(gallery));
+    localStorage.setItem('legado_appointments', JSON.stringify(appointments));
+    setAdminMessage('¡Cambios guardados exitosamente!');
+    setTimeout(() => setAdminMessage(''), 3000);
   };
 
   const handleAdminLogin = (e: React.FormEvent) => {
@@ -652,13 +673,37 @@ export default function App() {
             >
               {/* Modal Header */}
               <div className="flex justify-between items-center p-6 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-black/50">
-                <h2 className="text-2xl font-serif font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-                  <Lock className="text-[#D4AF37]" /> Panel de Administración
-                </h2>
+                <div className="flex items-center gap-4">
+                  <h2 className="text-2xl font-serif font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+                    <Lock className="text-[#D4AF37]" /> Panel de Administración
+                  </h2>
+                  {isAuthenticated && (
+                    <button 
+                      onClick={saveAdminChanges}
+                      className="hidden md:flex bg-[#D4AF37] text-black px-4 py-2 rounded-sm text-sm font-bold uppercase tracking-wider hover:bg-yellow-500 transition-colors items-center gap-2"
+                    >
+                      <Save size={16} /> Guardar Cambios
+                    </button>
+                  )}
+                  {adminMessage && <span className="text-green-600 dark:text-green-400 text-sm font-bold hidden md:block">{adminMessage}</span>}
+                </div>
                 <button onClick={() => { setIsAdminOpen(false); setIsAuthenticated(false); setAdminPassword(''); }} className="text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors">
                   <X size={24} />
                 </button>
               </div>
+
+              {/* Mobile Save Button */}
+              {isAuthenticated && (
+                <div className="md:hidden p-4 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-black/50 flex justify-between items-center">
+                  <button 
+                    onClick={saveAdminChanges}
+                    className="bg-[#D4AF37] text-black px-4 py-2 rounded-sm text-sm font-bold uppercase tracking-wider hover:bg-yellow-500 transition-colors flex items-center gap-2"
+                  >
+                    <Save size={16} /> Guardar
+                  </button>
+                  {adminMessage && <span className="text-green-600 dark:text-green-400 text-sm font-bold">{adminMessage}</span>}
+                </div>
+              )}
 
               {/* Modal Body */}
               <div className="p-6 overflow-y-auto flex-1 custom-scrollbar">
@@ -743,6 +788,13 @@ export default function App() {
                                       </button>
                                     </div>
                                   )}
+                                  <button 
+                                    onClick={() => deleteAppointment(appt.id)}
+                                    className="bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-red-600 dark:text-red-400 p-1.5 rounded-sm transition-colors mt-2 md:mt-0"
+                                    title="Eliminar reserva"
+                                  >
+                                    <Trash2 size={18} />
+                                  </button>
                                 </div>
                               </div>
                             ))}
