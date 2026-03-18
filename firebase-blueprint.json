@@ -1,0 +1,71 @@
+{
+  "entities": {
+    "Service": {
+      "title": "Service",
+      "description": "A barber shop service",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "price": { "type": "number" },
+        "order": { "type": "number" }
+      },
+      "required": ["name", "description", "price", "order"]
+    },
+    "GalleryImage": {
+      "title": "Gallery Image",
+      "description": "An image in the gallery",
+      "type": "object",
+      "properties": {
+        "url": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["url", "createdAt"]
+    },
+    "Appointment": {
+      "title": "Appointment",
+      "description": "A booking request",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "service": { "type": "string" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "confirmed", "rejected"] },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["name", "service", "date", "time", "status", "createdAt"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "A customer review",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "rating": { "type": "number" },
+        "comment": { "type": "string" },
+        "date": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["name", "rating", "comment", "date", "createdAt"]
+    }
+  },
+  "firestore": {
+    "services/{serviceId}": {
+      "schema": { "$ref": "#/entities/Service" },
+      "description": "List of services"
+    },
+    "gallery/{imageId}": {
+      "schema": { "$ref": "#/entities/GalleryImage" },
+      "description": "Gallery images"
+    },
+    "appointments/{appointmentId}": {
+      "schema": { "$ref": "#/entities/Appointment" },
+      "description": "Customer appointments"
+    },
+    "reviews/{reviewId}": {
+      "schema": { "$ref": "#/entities/Review" },
+      "description": "Customer reviews"
+    }
+  }
+}

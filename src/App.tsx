@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Scissors, MapPin, Phone, Clock, Calendar, User, Star, ChevronRight, Lock, X, Plus, Trash2, Menu, Sun, Moon, Check, CalendarPlus, Save } from 'lucide-react';
-import Chatbot from './components/Chatbot';
+import { Scissors, MapPin, Phone, Clock, Calendar, User, Star, ChevronRight, Lock, X, Plus, Trash2, Menu, Sun, Moon, Check, CalendarPlus, Save, LogOut } from 'lucide-react';
+import { collection, onSnapshot, addDoc, deleteDoc, updateDoc, doc, query, orderBy, getDocs } from 'firebase/firestore';
+import { db, auth, loginWithGoogle, logout } from './firebase';
 
 // --- Initial Data ---
 const initialServices = [
@@ -18,6 +19,12 @@ const initialGallery = [
   'https://images.unsplash.com/photo-1587515053748-0e3658215985?auto=format&fit=crop&q=80&w=600&h=400',
   'https://images.unsplash.com/photo-1534294228306-bd54eb9a7ba8?auto=format&fit=crop&q=80&w=600&h=400',
   'https://images.unsplash.com/photo-1599839619722-39751411ea63?auto=format&fit=crop&q=80&w=600&h=400',
+];
+
+const initialReviews = [
+  { id: 1, name: 'Carlos M.', rating: 5, comment: 'Excelente servicio, el corte quedó perfecto y la atención de primera.', date: '2026-03-10' },
+  { id: 2, name: 'Alejandro G.', rating: 5, comment: 'El arreglo de barba es un ritual increíble. Muy recomendado el lugar.', date: '2026-03-12' },
+  { id: 3, name: 'Fernando R.', rating: 4, comment: 'Muy buen ambiente y música. Me gustó mucho el resultado.', date: '2026-03-15' },
 ];
 
 // --- Animation Variants ---
@@ -37,25 +44,19 @@ const staggerContainer = {
 export default function App() {
   // --- State ---
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
-  const [services, setServices] = useState(() => {
-    try { const saved = localStorage.getItem('legado_services'); return saved ? JSON.parse(saved) : initialServices; } catch { return initialServices; }
-  });
-  const [gallery, setGallery] = useState(() => {
-    try { const saved = localStorage.getItem('legado_gallery'); return saved ? JSON.parse(saved) : initialGallery; } catch { return initialGallery; }
-  });
-  const [appointments, setAppointments] = useState<{ id: number; name: string; service: string; date: string; time: string; status: 'pending' | 'confirmed' | 'rejected' }[]>(() => {
-    try { const saved = localStorage.getItem('legado_appointments'); return saved ? JSON.parse(saved) : []; } catch { return []; }
-  });
+  const [services, setServices] = useState<any[]>([]);
+  const [gallery, setGallery] = useState<any[]>([]);
+  const [appointments, setAppointments] = useState<any[]>([]);
+  const [reviews, setReviews] = useState<any[]>([]);
   
   const [isScrolled, setIsScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Admin State
   const [isAdminOpen, setIsAdminOpen] = useState(false);
-  const [adminPassword, setAdminPassword] = useState('');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [adminError, setAdminError] = useState('');
-  const [adminTab, setAdminTab] = useState('citas'); // citas, servicios, galeria
+  const [adminTab, setAdminTab] = useState('citas'); // citas, servicios, galeria, reseñas
   const [adminMessage, setAdminMessage] = useState('');
 
   // Reservation Form State
@@ -64,12 +65,61 @@ export default function App() {
   const [resDate, setResDate] = useState('');
   const [resTime, setResTime] = useState('');
   const [resSuccess, setResSuccess] = useState(false);
+  const [resError, setResError] = useState('');
   const [confirmedAppt, setConfirmedAppt] = useState<{name: string, service: string, date: string, time: string} | null>(null);
+
+  // Review Form State
+  const [revName, setRevName] = useState('');
+  const [revRating, setRevRating] = useState(5);
+  const [revComment, setRevComment] = useState('');
+  const [revSuccess, setRevSuccess] = useState(false);
+  const [revError, setRevError] = useState('');
 
   // File Input Ref
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // --- Effects ---
+  useEffect(() => {
+    const unsubscribeAuth = auth.onAuthStateChanged((user) => {
+      if (user && user.email === 'josekhalili9@gmail.com') {
+        setIsAuthenticated(true);
+      } else {
+        setIsAuthenticated(false);
+      }
+    });
+
+    const unsubServices = onSnapshot(query(collection(db, 'services'), orderBy('order')), (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setServices(data.length > 0 ? data : initialServices);
+    });
+    const unsubGallery = onSnapshot(query(collection(db, 'gallery'), orderBy('createdAt', 'desc')), (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, url: doc.data().url }));
+      setGallery(data.length > 0 ? data : initialGallery.map((url, i) => ({ id: i.toString(), url })));
+    });
+    const unsubReviews = onSnapshot(query(collection(db, 'reviews'), orderBy('createdAt', 'desc')), (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setReviews(data.length > 0 ? data : initialReviews);
+    });
+
+    return () => {
+      unsubscribeAuth();
+      unsubServices();
+      unsubGallery();
+      unsubReviews();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      const unsubAppointments = onSnapshot(query(collection(db, 'appointments'), orderBy('createdAt', 'desc')), (snapshot) => {
+        setAppointments(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      });
+      return unsubAppointments;
+    } else {
+      setAppointments([]);
+    }
+  }, [isAuthenticated]);
+
   useEffect(() => {
     if (theme === 'dark') {
       document.documentElement.classList.add('dark');
@@ -91,25 +141,56 @@ export default function App() {
     setTheme(prev => prev === 'dark' ? 'light' : 'dark');
   };
 
-  const handleReservation = (e: React.FormEvent) => {
+  const seedDatabase = async () => {
+    try {
+      const servicesSnap = await getDocs(collection(db, 'services'));
+      if (servicesSnap.empty) {
+        for (let i = 0; i < initialServices.length; i++) {
+          await addDoc(collection(db, 'services'), { ...initialServices[i], order: i });
+        }
+      }
+      const gallerySnap = await getDocs(collection(db, 'gallery'));
+      if (gallerySnap.empty) {
+        for (let i = 0; i < initialGallery.length; i++) {
+          await addDoc(collection(db, 'gallery'), { url: initialGallery[i], createdAt: Date.now() - i });
+        }
+      }
+      const reviewsSnap = await getDocs(collection(db, 'reviews'));
+      if (reviewsSnap.empty) {
+        for (let i = 0; i < initialReviews.length; i++) {
+          await addDoc(collection(db, 'reviews'), { ...initialReviews[i], createdAt: Date.now() - i });
+        }
+      }
+      setAdminMessage('Base de datos inicializada.');
+      setTimeout(() => setAdminMessage(''), 3000);
+    } catch (error) {
+      console.error("Error seeding database:", error);
+    }
+  };
+
+  const handleReservation = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newAppt = {
-      id: Date.now(),
-      name: resName,
-      service: resService,
-      date: resDate,
-      time: resTime,
-      status: 'pending' as const
-    };
-    const updatedAppointments = [...appointments, newAppt];
-    setAppointments(updatedAppointments);
-    localStorage.setItem('legado_appointments', JSON.stringify(updatedAppointments));
-    setConfirmedAppt(newAppt);
-    setResSuccess(true);
-    setResName('');
-    setResService('');
-    setResDate('');
-    setResTime('');
+    setResError('');
+    try {
+      const newAppt = {
+        name: resName,
+        service: resService,
+        date: resDate,
+        time: resTime,
+        status: 'pending',
+        createdAt: Date.now()
+      };
+      await addDoc(collection(db, 'appointments'), newAppt);
+      setConfirmedAppt(newAppt as any);
+      setResSuccess(true);
+      setResName('');
+      setResService('');
+      setResDate('');
+      setResTime('');
+    } catch (error) {
+      console.error("Error al reservar:", error);
+      setResError("Hubo un error al procesar tu reserva. Inténtalo de nuevo.");
+    }
   };
 
   const generateCalendarLink = (appt: {service: string, date: string, time: string}) => {
@@ -128,44 +209,89 @@ export default function App() {
     return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${text}&dates=${dates}&details=${details}&location=${location}`;
   };
 
-  const updateAppointmentStatus = (id: number, status: 'pending' | 'confirmed' | 'rejected') => {
-    setAppointments(appointments.map(appt => 
-      appt.id === id ? { ...appt, status } : appt
-    ));
-  };
-
-  const deleteAppointment = (id: number) => {
-    setAppointments(appointments.filter(appt => appt.id !== id));
-  };
-
-  const saveAdminChanges = () => {
-    localStorage.setItem('legado_services', JSON.stringify(services));
-    localStorage.setItem('legado_gallery', JSON.stringify(gallery));
-    localStorage.setItem('legado_appointments', JSON.stringify(appointments));
-    setAdminMessage('¡Cambios guardados exitosamente!');
-    setTimeout(() => setAdminMessage(''), 3000);
-  };
-
-  const handleAdminLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (adminPassword === '8718') {
-      setIsAuthenticated(true);
-      setAdminError('');
-    } else {
-      setAdminError('Clave incorrecta. Acceso denegado.');
+  const updateAppointmentStatus = async (id: string, status: 'pending' | 'confirmed' | 'rejected') => {
+    try {
+      await updateDoc(doc(db, 'appointments', id), { status });
+    } catch (error) {
+      console.error("Error updating appointment:", error);
     }
   };
 
-  const updateService = (id: number, field: string, value: string | number) => {
-    setServices(services.map(s => s.id === id ? { ...s, [field]: value } : s));
+  const deleteAppointment = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'appointments', id));
+    } catch (error) {
+      console.error("Error deleting appointment:", error);
+    }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleReviewSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRevError('');
+    try {
+      const newReview = {
+        name: revName,
+        rating: revRating,
+        comment: revComment,
+        date: new Date().toISOString().split('T')[0],
+        createdAt: Date.now()
+      };
+      await addDoc(collection(db, 'reviews'), newReview);
+      setRevSuccess(true);
+      setRevName('');
+      setRevRating(5);
+      setRevComment('');
+      setTimeout(() => setRevSuccess(false), 3000);
+    } catch (error) {
+      console.error("Error submitting review:", error);
+      setRevError("Hubo un error al enviar tu reseña. Inténtalo de nuevo.");
+    }
+  };
+
+  const deleteReview = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'reviews', id));
+    } catch (error) {
+      console.error("Error deleting review:", error);
+    }
+  };
+
+  const handleAdminLogin = async () => {
+    try {
+      setAdminError('');
+      await loginWithGoogle();
+    } catch (error) {
+      setAdminError('Error al iniciar sesión. Asegúrate de usar la cuenta autorizada.');
+    }
+  };
+
+  const handleAdminLogout = async () => {
+    await logout();
+    setIsAdminOpen(false);
+  };
+
+  const updateService = async (id: string, field: string, value: string | number) => {
+    try {
+      await updateDoc(doc(db, 'services', id), { [field]: value });
+    } catch (error) {
+      console.error("Error updating service:", error);
+    }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setGallery([...gallery, reader.result as string]);
+      reader.onloadend = async () => {
+        try {
+          await addDoc(collection(db, 'gallery'), {
+            url: reader.result as string,
+            createdAt: Date.now()
+          });
+        } catch (error) {
+          console.error("Error adding photo:", error);
+          setAdminError("La imagen es demasiado grande o hubo un error.");
+        }
       };
       reader.readAsDataURL(file);
     }
@@ -175,8 +301,12 @@ export default function App() {
     fileInputRef.current?.click();
   };
 
-  const removeGalleryPhoto = (index: number) => {
-    setGallery(gallery.filter((_, i) => i !== index));
+  const removeGalleryPhoto = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'gallery', id));
+    } catch (error) {
+      console.error("Error deleting photo:", error);
+    }
   };
 
   const scrollToSection = (id: string) => {
@@ -205,10 +335,10 @@ export default function App() {
 
           {/* Desktop Nav */}
           <nav className="hidden md:flex gap-8 items-center">
-            {['Inicio', 'Servicios', 'Galería', 'Contacto'].map((item) => (
+            {['Inicio', 'Servicios', 'Galería', 'Reseñas', 'Contacto'].map((item) => (
               <button 
                 key={item} 
-                onClick={() => scrollToSection(item.toLowerCase())}
+                onClick={() => scrollToSection(item.toLowerCase().replace('ñ', 'n'))}
                 className={`text-sm uppercase tracking-wider hover:text-[#D4AF37] transition-colors relative group ${isScrolled ? 'text-zinc-900 dark:text-white' : 'text-white'}`}
               >
                 {item}
@@ -262,10 +392,10 @@ export default function App() {
               exit={{ opacity: 0, height: 0 }}
               className="md:hidden bg-white dark:bg-black border-t border-zinc-200 dark:border-zinc-800 mt-4 flex flex-col"
             >
-              {['Inicio', 'Servicios', 'Galería', 'Reservar', 'Contacto'].map((item) => (
+              {['Inicio', 'Servicios', 'Galería', 'Reseñas', 'Reservar', 'Contacto'].map((item) => (
                 <button 
                   key={item} 
-                  onClick={() => scrollToSection(item.toLowerCase())}
+                  onClick={() => scrollToSection(item.toLowerCase().replace('ñ', 'n'))}
                   className="p-4 border-b border-zinc-100 dark:border-zinc-900 text-left uppercase tracking-wider hover:text-[#D4AF37] text-zinc-900 dark:text-white"
                 >
                   {item}
@@ -376,13 +506,24 @@ export default function App() {
                   borderColor: "#D4AF37" 
                 }}
                 style={{ transformPerspective: 1000 }}
-                className="bg-white dark:bg-[#1a1a1a] border border-zinc-200 dark:border-zinc-800 p-8 rounded-sm transition-colors duration-300 group relative overflow-hidden"
+                className="bg-white dark:bg-[#1a1a1a] border border-zinc-200 dark:border-zinc-800 p-8 rounded-sm transition-colors duration-300 group relative overflow-hidden flex flex-col"
               >
                 <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-[#D4AF37]/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
                 <Scissors className="text-[#D4AF37] mb-6" size={32} />
                 <h3 className="text-xl font-bold text-zinc-900 dark:text-white mb-3">{service.name}</h3>
                 <p className="text-zinc-600 dark:text-zinc-400 mb-6 text-sm leading-relaxed">{service.description}</p>
-                <div className="text-2xl font-serif text-[#D4AF37]">${service.price}</div>
+                <div className="flex items-center justify-between mt-auto">
+                  <div className="text-2xl font-serif text-[#D4AF37]">${service.price}</div>
+                  <button 
+                    onClick={() => {
+                      setResService(service.name);
+                      scrollToSection('reservar');
+                    }}
+                    className="text-xs font-bold uppercase tracking-wider text-zinc-900 dark:text-white hover:text-[#D4AF37] dark:hover:text-[#D4AF37] transition-colors flex items-center gap-1"
+                  >
+                    Reservar <ChevronRight size={14} />
+                  </button>
+                </div>
               </motion.div>
             ))}
           </motion.div>
@@ -410,17 +551,17 @@ export default function App() {
             variants={staggerContainer}
             className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
           >
-            {gallery.map((img, index) => (
+            {gallery.map((img) => (
               <motion.div 
-                key={index}
+                key={img.id}
                 variants={fadeInUp}
                 whileHover={{ scale: 1.05, rotateZ: 2, rotateX: 10, rotateY: 10 }}
                 style={{ transformPerspective: 1000 }}
                 className="relative overflow-hidden group aspect-[4/3] rounded-sm shadow-lg"
               >
                 <img 
-                  src={img} 
-                  alt={`Galería ${index + 1}`} 
+                  src={img.url} 
+                  alt="Galería" 
                   className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
                   referrerPolicy="no-referrer"
                 />
@@ -575,6 +716,7 @@ export default function App() {
                     </div>
                   </div>
                 </div>
+                {resError && <p className="text-red-500 text-sm mt-4 text-center">{resError}</p>}
                 <motion.button 
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
@@ -585,6 +727,81 @@ export default function App() {
                 </motion.button>
               </form>
             )}
+          </motion.div>
+        </div>
+      </section>
+
+      {/* --- Reviews --- */}
+      <section id="resenas" className="py-24 px-6 bg-white dark:bg-black transition-colors duration-300">
+        <div className="max-w-6xl mx-auto">
+          <motion.div 
+            initial="hidden"
+            whileInView="visible"
+            viewport={{ once: true }}
+            variants={staggerContainer}
+          >
+            <motion.div variants={fadeInUp} className="text-center mb-16">
+              <h2 className="text-3xl md:text-5xl font-serif font-bold text-zinc-900 dark:text-white mb-4">
+                Lo que dicen nuestros clientes
+              </h2>
+              <div className="w-24 h-1 bg-[#D4AF37] mx-auto"></div>
+            </motion.div>
+
+            {/* Grid of reviews */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-16">
+              {reviews.slice(0, 6).map(review => (
+                <motion.div key={review.id} variants={fadeInUp} className="bg-zinc-50 dark:bg-[#111] p-6 rounded-sm border border-zinc-200 dark:border-zinc-800 flex flex-col justify-between">
+                  <div>
+                    <div className="flex text-[#D4AF37] mb-4">
+                      {[...Array(5)].map((_, i) => (
+                        <Star key={i} size={16} className={i < review.rating ? "fill-current" : "text-zinc-300 dark:text-zinc-700"} />
+                      ))}
+                    </div>
+                    <p className="text-zinc-600 dark:text-zinc-400 mb-6 italic leading-relaxed">"{review.comment}"</p>
+                  </div>
+                  <div className="flex justify-between items-center text-sm border-t border-zinc-200 dark:border-zinc-800 pt-4 mt-4">
+                    <span className="font-bold text-zinc-900 dark:text-white">{review.name}</span>
+                    <span className="text-zinc-500">{review.date}</span>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+
+            {/* Add Review Form */}
+            <motion.div variants={fadeInUp} className="max-w-2xl mx-auto bg-zinc-50 dark:bg-[#111] p-8 rounded-sm border border-zinc-200 dark:border-zinc-800">
+              <h3 className="text-2xl font-serif font-bold text-zinc-900 dark:text-white mb-6 text-center">Deja tu reseña</h3>
+              {revSuccess ? (
+                <div className="text-center text-green-600 dark:text-green-400 py-8">
+                  <Check size={48} className="mx-auto mb-4" />
+                  <p className="font-bold text-xl">¡Gracias por tu reseña!</p>
+                </div>
+              ) : (
+                <form onSubmit={handleReviewSubmit} className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-bold text-zinc-900 dark:text-white mb-2 uppercase tracking-wider">Nombre</label>
+                    <input required type="text" value={revName} onChange={e => setRevName(e.target.value)} className="w-full bg-white dark:bg-black border border-zinc-200 dark:border-zinc-800 rounded-sm py-3 px-4 text-zinc-900 dark:text-white focus:outline-none focus:border-[#D4AF37] transition-colors" placeholder="Tu nombre" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-zinc-900 dark:text-white mb-2 uppercase tracking-wider">Calificación</label>
+                    <div className="flex gap-2">
+                      {[1, 2, 3, 4, 5].map(star => (
+                        <button type="button" key={star} onClick={() => setRevRating(star)} className={`transition-colors ${star <= revRating ? 'text-[#D4AF37]' : 'text-zinc-300 dark:text-zinc-700'}`}>
+                          <Star size={32} className={star <= revRating ? "fill-current" : ""} />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-zinc-900 dark:text-white mb-2 uppercase tracking-wider">Comentario</label>
+                    <textarea required rows={4} value={revComment} onChange={e => setRevComment(e.target.value)} className="w-full bg-white dark:bg-black border border-zinc-200 dark:border-zinc-800 rounded-sm py-3 px-4 text-zinc-900 dark:text-white focus:outline-none focus:border-[#D4AF37] transition-colors resize-none" placeholder="¿Qué te pareció nuestro servicio?"></textarea>
+                  </div>
+                  {revError && <p className="text-red-500 text-sm mt-2 text-center">{revError}</p>}
+                  <button type="submit" className="w-full bg-[#D4AF37] text-black py-4 rounded-sm font-bold uppercase tracking-widest hover:bg-yellow-500 transition-colors mt-6">
+                    Enviar Reseña
+                  </button>
+                </form>
+              )}
+            </motion.div>
           </motion.div>
         </div>
       </section>
@@ -679,27 +896,35 @@ export default function App() {
                   </h2>
                   {isAuthenticated && (
                     <button 
-                      onClick={saveAdminChanges}
-                      className="hidden md:flex bg-[#D4AF37] text-black px-4 py-2 rounded-sm text-sm font-bold uppercase tracking-wider hover:bg-yellow-500 transition-colors items-center gap-2"
+                      onClick={seedDatabase}
+                      className="hidden md:flex bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-white px-4 py-2 rounded-sm text-sm font-bold uppercase tracking-wider hover:bg-zinc-300 dark:hover:bg-zinc-700 transition-colors items-center gap-2"
+                      title="Inicializar base de datos con datos de prueba"
                     >
-                      <Save size={16} /> Guardar Cambios
+                      <Save size={16} /> Inicializar Datos
                     </button>
                   )}
                   {adminMessage && <span className="text-green-600 dark:text-green-400 text-sm font-bold hidden md:block">{adminMessage}</span>}
                 </div>
-                <button onClick={() => { setIsAdminOpen(false); setIsAuthenticated(false); setAdminPassword(''); }} className="text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors">
-                  <X size={24} />
-                </button>
+                <div className="flex items-center gap-4">
+                  {isAuthenticated && (
+                    <button onClick={handleAdminLogout} className="text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors" title="Cerrar sesión">
+                      <LogOut size={20} />
+                    </button>
+                  )}
+                  <button onClick={() => setIsAdminOpen(false)} className="text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition-colors">
+                    <X size={24} />
+                  </button>
+                </div>
               </div>
 
               {/* Mobile Save Button */}
               {isAuthenticated && (
                 <div className="md:hidden p-4 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-black/50 flex justify-between items-center">
                   <button 
-                    onClick={saveAdminChanges}
-                    className="bg-[#D4AF37] text-black px-4 py-2 rounded-sm text-sm font-bold uppercase tracking-wider hover:bg-yellow-500 transition-colors flex items-center gap-2"
+                    onClick={seedDatabase}
+                    className="bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-white px-4 py-2 rounded-sm text-sm font-bold uppercase tracking-wider hover:bg-zinc-300 dark:hover:bg-zinc-700 transition-colors flex items-center gap-2"
                   >
-                    <Save size={16} /> Guardar
+                    <Save size={16} /> Inicializar
                   </button>
                   {adminMessage && <span className="text-green-600 dark:text-green-400 text-sm font-bold">{adminMessage}</span>}
                 </div>
@@ -708,38 +933,29 @@ export default function App() {
               {/* Modal Body */}
               <div className="p-6 overflow-y-auto flex-1 custom-scrollbar">
                 {!isAuthenticated ? (
-                  <div className="max-w-md mx-auto py-12">
-                    <div className="text-center mb-8">
-                      <p className="text-zinc-600 dark:text-zinc-400">Ingresa la clave de administrador para continuar.</p>
+                  <div className="max-w-md mx-auto py-12 text-center">
+                    <div className="mb-8">
+                      <p className="text-zinc-600 dark:text-zinc-400">Inicia sesión con tu cuenta de Google autorizada para acceder al panel.</p>
                     </div>
-                    <form onSubmit={handleAdminLogin} className="space-y-4">
-                      <div>
-                        <input 
-                          type="password" 
-                          value={adminPassword}
-                          onChange={(e) => setAdminPassword(e.target.value)}
-                          placeholder="Clave de acceso"
-                          className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-sm py-3 px-4 text-zinc-900 dark:text-white text-center tracking-[0.5em] focus:outline-none focus:border-[#D4AF37] transition-colors"
-                          autoFocus
-                        />
-                      </div>
-                      {adminError && <p className="text-red-500 text-sm text-center">{adminError}</p>}
-                      <button type="submit" className="w-full bg-[#D4AF37] text-black py-3 rounded-sm font-bold uppercase tracking-widest hover:bg-yellow-500 transition-colors">
-                        Ingresar
-                      </button>
-                    </form>
+                    <button 
+                      onClick={handleAdminLogin} 
+                      className="w-full bg-[#D4AF37] text-black py-4 rounded-sm font-bold uppercase tracking-widest hover:bg-yellow-500 transition-colors flex items-center justify-center gap-2"
+                    >
+                      <User size={20} /> Iniciar Sesión con Google
+                    </button>
+                    {adminError && <p className="text-red-500 text-sm mt-4">{adminError}</p>}
                   </div>
                 ) : (
                   <div>
                     {/* Admin Tabs */}
                     <div className="flex gap-4 mb-8 border-b border-zinc-200 dark:border-zinc-800 pb-4 overflow-x-auto">
-                      {['citas', 'servicios', 'galeria'].map(tab => (
+                      {['citas', 'servicios', 'galeria', 'reseñas'].map(tab => (
                         <button 
                           key={tab}
                           onClick={() => setAdminTab(tab)}
                           className={`px-4 py-2 uppercase tracking-wider text-sm font-bold rounded-sm whitespace-nowrap transition-colors ${adminTab === tab ? 'bg-[#D4AF37] text-black' : 'bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white'}`}
                         >
-                          {tab === 'galeria' ? 'Galería' : tab}
+                          {tab === 'galeria' ? 'Galería' : tab === 'reseñas' ? 'Reseñas' : tab}
                         </button>
                       ))}
                     </div>
@@ -806,10 +1022,44 @@ export default function App() {
                     {/* Tab Content: Servicios */}
                     {adminTab === 'servicios' && (
                       <div>
-                        <h3 className="text-xl font-bold text-zinc-900 dark:text-white mb-6">Editar Servicios y Precios</h3>
+                        <div className="flex justify-between items-center mb-6">
+                          <h3 className="text-xl font-bold text-zinc-900 dark:text-white">Editar Servicios y Precios</h3>
+                          <button 
+                            onClick={async () => {
+                              try {
+                                await addDoc(collection(db, 'services'), {
+                                  name: 'Nuevo Servicio',
+                                  description: 'Descripción del servicio',
+                                  price: 0,
+                                  order: services.length
+                                });
+                              } catch (error) {
+                                console.error("Error adding service:", error);
+                              }
+                            }}
+                            className="bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-zinc-900 dark:text-white px-4 py-2 rounded-sm text-sm flex items-center gap-2 transition-colors"
+                          >
+                            <Plus size={16} /> Agregar Servicio
+                          </button>
+                        </div>
                         <div className="space-y-6">
                           {services.map(service => (
-                            <div key={service.id} className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-6 rounded-sm grid grid-cols-1 md:grid-cols-12 gap-4">
+                            <div key={service.id} className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-6 rounded-sm grid grid-cols-1 md:grid-cols-12 gap-4 relative">
+                              <button 
+                                onClick={async () => {
+                                  if (window.confirm('¿Estás seguro de eliminar este servicio?')) {
+                                    try {
+                                      await deleteDoc(doc(db, 'services', service.id));
+                                    } catch (error) {
+                                      console.error("Error deleting service:", error);
+                                    }
+                                  }
+                                }}
+                                className="absolute top-2 right-2 text-red-500 hover:text-red-700 p-2"
+                                title="Eliminar servicio"
+                              >
+                                <Trash2 size={16} />
+                              </button>
                               <div className="md:col-span-4">
                                 <label className="block text-xs text-zinc-500 mb-1 uppercase tracking-wider">Nombre</label>
                                 <input 
@@ -865,12 +1115,12 @@ export default function App() {
                           </div>
                         </div>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                          {gallery.map((img, index) => (
-                            <div key={index} className="relative group aspect-square bg-zinc-100 dark:bg-zinc-900 rounded-sm overflow-hidden border border-zinc-200 dark:border-zinc-800">
-                              <img src={img} alt={`Galeria ${index}`} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          {gallery.map((img) => (
+                            <div key={img.id} className="relative group aspect-square bg-zinc-100 dark:bg-zinc-900 rounded-sm overflow-hidden border border-zinc-200 dark:border-zinc-800">
+                              <img src={img.url} alt="Galeria" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                               <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                                 <button 
-                                  onClick={() => removeGalleryPhoto(index)}
+                                  onClick={() => removeGalleryPhoto(img.id)}
                                   className="bg-red-600 hover:bg-red-700 text-white p-3 rounded-full transition-colors"
                                   title="Eliminar foto"
                                 >
@@ -880,6 +1130,44 @@ export default function App() {
                             </div>
                           ))}
                         </div>
+                      </div>
+                    )}
+
+                    {/* Tab Content: Reseñas */}
+                    {adminTab === 'reseñas' && (
+                      <div>
+                        <h3 className="text-xl font-bold text-zinc-900 dark:text-white mb-6">Administrar Reseñas</h3>
+                        {reviews.length === 0 ? (
+                          <p className="text-zinc-500 text-center py-12">No hay reseñas registradas aún.</p>
+                        ) : (
+                          <div className="space-y-4">
+                            {reviews.map(review => (
+                              <div key={review.id} className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-4 rounded-sm flex flex-col md:flex-row justify-between md:items-center gap-4">
+                                <div>
+                                  <div className="flex items-center gap-3 mb-1">
+                                    <p className="text-zinc-900 dark:text-white font-bold text-lg">{review.name}</p>
+                                    <div className="flex text-[#D4AF37]">
+                                      {[...Array(5)].map((_, i) => (
+                                        <Star key={i} size={12} className={i < review.rating ? "fill-current" : "text-zinc-300 dark:text-zinc-700"} />
+                                      ))}
+                                    </div>
+                                  </div>
+                                  <p className="text-zinc-600 dark:text-zinc-400 text-sm italic">"{review.comment}"</p>
+                                </div>
+                                <div className="flex flex-col md:flex-row md:items-center gap-4">
+                                  <span className="text-zinc-500 dark:text-zinc-400 text-sm">{review.date}</span>
+                                  <button 
+                                    onClick={() => deleteReview(review.id)}
+                                    className="bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-red-600 dark:text-red-400 p-1.5 rounded-sm transition-colors mt-2 md:mt-0"
+                                    title="Eliminar reseña"
+                                  >
+                                    <Trash2 size={18} />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -910,9 +1198,6 @@ export default function App() {
           background: #D4AF37;
         }
       `}} />
-
-      {/* Chatbot */}
-      <Chatbot />
     </div>
   );
 }
